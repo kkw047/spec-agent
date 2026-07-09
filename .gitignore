@@ -19,6 +19,7 @@ coverage/
 local_data/
 tmp/
 *.log
+docs/
 
 .DS_Store
 Thumbs.db
