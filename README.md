@@ -1,202 +1,176 @@
 # SPEC Agent
 
-SPEC Agent는 한국 특허 출원명세서 검토용 초안을 만드는 대화형 LLM Agent다.
+SPEC Agent는 회의록, 아이디어 메모, 도면 설명, 상담 기록 같은 발명 자료를 바탕으로 한국 특허 출원명세서 검토용 초안을 작성하는 대화형 LLM Agent입니다.
 
-사용자는 회의록, 아이디어 메모, 도면 설명, 상담 기록, PDF/DOCX/TXT/이미지 파일을 업로드한다. Agent는 자료를 읽고 필수항목을 구조화한 뒤, 부족한 항목을 채팅으로 다시 묻고, Markdown/Word 초안과 체크리스트를 생성한다.
+자료를 그대로 양식에 채우는 도구가 아니라, 부족한 항목을 질문하고, 근거 없는 내용은 분리하며, KIPRISPlus 선행기술 후보와 체크리스트를 함께 보여주는 초안 작성 보조 도구입니다.
 
-중요 원칙:
+## 주요 기능
 
-- 자료에 없는 실험 수치, 임계값, 효과, 선행문헌 번호, 도면은 생성하지 않음
-- KIPRISPlus 후보는 자동 검색 후보이며, 최종 신규성/진보성/등록 가능성 판단이 아님
-- 특허성 판단, 청구범위 확정, 자동 출원은 사람 검토 영역
+- PDF, DOCX, TXT, 이미지 자료 업로드
+- 한 세션 안에서 대화와 자료 누적
+- 출원명세서 필수항목 구조화
+- 부족 항목과 검토 필요 항목 체크리스트 표시
+- 자료가 부족할 때 안전한 아이디어 구체화 후보 제안
+- KIPRISPlus 기반 국내 특허·실용 선행기술 후보 검색
+- Markdown, Word 초안 다운로드
 
-## 로컬 실행
-
-최상위 폴더에서 실행.
+## 빠른 시작
 
 ```powershell
-cd C:\Users\KKW\Documents\계절학기\spec-agent
-npm run dev:backend
+git clone https://github.com/kkw047/spec-agent.git
+cd spec-agent
+```
+
+백엔드 설치:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+프론트엔드 설치:
+
+```powershell
+cd ..\frontend
+npm install
+```
+
+환경 파일 준비:
+
+```powershell
+cd ..
+copy .env.example .env
+```
+
+`.env`에 OpenAI, PostgreSQL/pgVector, KIPRISPlus 값을 입력합니다.
+
+## 실행
+
+터미널 1:
+
+```powershell
+cd backend
+.\.venv\Scripts\activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+터미널 2:
+
+```powershell
+cd frontend
 npm run dev
 ```
 
 접속 주소:
 
 ```text
-프론트엔드: http://localhost:5173
-백엔드 API: http://localhost:8000
-상태 확인: http://localhost:8000/api/health
+http://localhost:5173
 ```
 
-검증 명령:
+백엔드 상태 확인:
 
-```powershell
-npm run check:backend
-npm run lint
-npm run build
+```text
+http://localhost:8000/api/health
 ```
 
-## 최초 설치
-
-```powershell
-cd C:\Users\KKW\Documents\계절학기\spec-agent\backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-
-cd ..\frontend
-npm install
-```
-
-## 환경변수
-
-실제 값은 프로젝트 루트의 `.env`에 입력.
-
-`.env.example`은 형식 예시다. 실제 API 키와 DB 비밀번호는 기록하지 않음.
-
-필수 구성:
-
-```env
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.4-mini
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-
-POSTGRES_HOST=lab.studynest.kr
-POSTGRES_PORT=45432
-POSTGRES_USER=
-POSTGRES_PASSWORD=
-POSTGRES_DB=
-PGVECTOR_COLLECTION=spec_agent_public_references
-
-CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-PATENT_GUIDE_URL=https://www.patent.go.kr/smart/jsp/ka/menu/guide/main/GuideMain0208.do
-
-KIPRIS_SEARCH_ENABLED=true
-KIPRIS_API_KEY=
-KIPRIS_API_BASE_URL=https://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice
-KIPRIS_RESULT_COUNT=5
-KIPRIS_TIMEOUT_SECONDS=12
-
-REFERENCE_SOURCE_DIR=local_data/references
-DRAFT_OUTPUT_DIR=local_data/outputs
-```
-
-## 폴더 구조
+## 프로젝트 구조
 
 ```text
 backend/
   app/
-    main.py                 FastAPI API 입구
-    core/config.py          .env, DB, OpenAI, KIPRIS 설정
-    models/schemas.py       API 요청/응답 데이터 구조
-    services/
-      spec_agent.py         Agent 핵심 처리 흐름
-      guardrails.py         허위정보/범위초과 요청 차단
-      materials.py          업로드 파일 추출
-      rag.py                pgVector 저장/검색
-      kipris.py             KIPRISPlus 선행기술 후보 검색
-      session_store.py      세션 대화/자료 저장
-      markdown.py           Markdown 산출물 생성
-      exporter.py           Word 산출물 생성
-  scripts/
-    ingest_references.py    참고자료 pgVector 인덱싱
-    copy_user_references.ps1 다운로드 폴더 자료 복사 보조
-  templates/
-    명세서_양식.docx         Word 출력 템플릿
+    main.py                 FastAPI API
+    core/config.py          환경 설정
+    models/schemas.py       요청/응답 모델
+    services/spec_agent.py  LangGraph Agent 흐름
+    services/guardrails.py  요청 차단과 의도 분류
+    services/rag.py         pgVector 저장과 검색
+    services/kipris.py      KIPRISPlus 후보 검색
+    services/materials.py   업로드 파일 추출
+    services/exporter.py    Word 출력
 
 frontend/
-  src/App.jsx               채팅 UI, 체크리스트, 다운로드, 선행기술 후보 표시
+  src/App.jsx               채팅 화면, 체크리스트, 다운로드 UI
   src/styles.css            화면 스타일
-  src/main.jsx              React 진입점
 
-docs/
-  DEVELOPER_GUIDE.md        개발자 상세 가이드
-  AGENT_FLOW.md             Agent 처리 흐름과 발표용 설명
-  API_INTEGRATION_GUIDE.md  OpenAI/DB/KIPRIS API 연동 가이드
-  LEARNED_TECH_MAPPING.md   수업에서 배운 기술과 실제 구현 위치
-  PRESENTATION_MATERIAL.md  발표용 흐름/예상 질문 답변
+demo_materials/             발표와 테스트용 예시 자료
+docs/                       개발 가이드, 발표 자료, Agent 흐름 설명
 ```
 
-## Git에서 제외되는 폴더
+## 전체 흐름
 
-아래 항목은 로컬 실행 중 생성되거나 비밀값/대용량 자료가 들어가므로 Git 제외.
-
-```text
-.env
-.env.local
-backend/.venv/
-frontend/node_modules/
-frontend/dist/
-local_data/
-tmp/
-*.log
+```mermaid
+flowchart TD
+  A["사용자 메시지와 파일 업로드"] --> B["Guardrail 검사"]
+  B --> B1["LLM Guardrail Classifier"]
+  B1 -->|차단 요청| C["차단 응답"]
+  B1 -->|아이디어 구체화| D["Safe Ideation Agent"]
+  B1 -->|초안 작성 가능| E["자료 추출"]
+  D --> E
+  E --> F["세션 메모리 저장"]
+  E --> G["토큰화와 임베딩"]
+  G --> H["pgVector 저장"]
+  F --> I["RAG 검색"]
+  I --> J["세션 자료 검색"]
+  I --> K["공용 참고자료 검색"]
+  I --> L["KIPRISPlus 후보 검색"]
+  J --> M["LLM 명세서 구조화"]
+  K --> M
+  L --> M
+  M --> N["자기검토와 근거 대조"]
+  N --> O["필수항목 체크리스트"]
+  O --> P["Human-in-the-loop 질문"]
+  P --> Q["Markdown/Word 생성"]
+  Q --> R["웹 화면 표시와 다운로드"]
 ```
 
 ## 데모 자료
 
-발표 전 체험용 자료 위치: `demo_materials/`
+`demo_materials/`에는 발표 전에 바로 테스트할 수 있는 예시 자료가 들어 있습니다.
+
+| 폴더 | 주제 | 특징 |
+|---|---|---|
+| [`complete_baby_chair_case`](demo_materials/complete_baby_chair_case) | 접이식 유아용 의자 | 상담기록, 구성요소, 도면부호, 효과 자료 포함 |
+| [`complete_flying_car_case`](demo_materials/complete_flying_car_case) | 도로주행/비행 겸용 자동차 | 비교적 완성된 초안 테스트용 |
+| [`food_shape_case`](demo_materials/food_shape_case) | 새로운 식품 성형체 | 식품 구조와 제조 흐름 테스트용 |
+| [`ergonomic_chair_case`](demo_materials/ergonomic_chair_case) | 인체공학 의자 | 센서/조절 구조 아이디어 테스트용 |
+| [`ai_software_case`](demo_materials/ai_software_case) | AI 소프트웨어 발명 | 소프트웨어 특허 초안 테스트용 |
+| [`complete_case`](demo_materials/complete_case) | 기본 완성 예시 | Markdown 자료 기반 테스트용 |
+
+테스트 방법:
+
+1. 웹 화면에서 `파일` 또는 `폴더` 버튼을 누릅니다.
+2. 위 데모 폴더 중 하나의 파일들을 업로드합니다.
+3. 아래처럼 메시지를 보냅니다.
 
 ```text
-demo_materials/complete_case/
-demo_materials/complete_flying_car_case/
-demo_materials/complete_baby_chair_case/
-demo_materials/food_shape_case/
-demo_materials/ergonomic_chair_case/
-demo_materials/ai_software_case/
+첨부 자료를 분석해서 출원명세서 검토용 초안을 작성해줘.
+부족한 항목은 질문으로 알려주고, 근거 없는 수치나 도면부호는 만들지 마.
 ```
 
-사용 방법:
-
-1. 프론트 화면에서 폴더 버튼 선택
-2. 위 폴더 중 하나를 통째로 업로드
-3. 아래 문장 전송
-
-```text
-첨부 자료를 모두 분석해서 출원명세서 검토용 초안을 작성해줘.
-부족한 항목이 있으면 답장 안에서 먼저 질문하고, 오른쪽 체크리스트에도 표시해줘.
-근거 없는 실험 결과나 수치는 만들지 말고, 자료에 있는 내용만 반영해줘.
-```
-
-## 참고자료 인덱싱
-
-공용 참고자료는 `local_data/references/`에 넣고 pgVector에 인덱싱.
+## 품질 확인
 
 ```powershell
-cd C:\Users\KKW\Documents\계절학기\spec-agent\backend
-.venv\Scripts\python.exe scripts\ingest_references.py
+npm run check:backend
+npm --prefix frontend run build
 ```
 
-특허로 안내 페이지만 넣는 경우:
+프론트엔드 린트:
 
 ```powershell
-.venv\Scripts\python.exe scripts\ingest_references.py --html-only
+cd frontend
+npm run lint
 ```
 
-참고자료는 초안의 빈 내용을 대신 꾸며 넣는 용도가 아님. 명세서 형식, 용어, 사용자 자료와 연결되는 근거 문장을 확인하기 위한 자료.
+## 자세한 문서
 
-## 다운로드 보안
+- [개발자 가이드](docs/DEVELOPER_GUIDE.md)
+- [Agent 흐름 요약](docs/AGENT_FLOW.md)
+- [API 연동 가이드](docs/API_INTEGRATION_GUIDE.md)
+- [수업 기술 매핑](docs/LEARNED_TECH_MAPPING.md)
+- [발표 자료와 예상 질문](docs/PRESENTATION_MATERIAL.md)
 
-생성된 Markdown/Word 파일 저장 위치: `local_data/outputs/{session_id}/`
+## 책임 범위
 
-프론트 다운로드 경로:
-
-```text
-GET /api/files/{session_id}/{filename}
-```
-
-세션 ID 없이 파일명만으로 받는 구 방식은 차단. 현재 앱은 로그인/사용자 권한 분리가 없는 로컬 단일 사용자용 구조다. 여러 사람이 쓰는 서비스로 만들려면 계정 인증, 세션 소유권 검사, 보존기간 삭제 정책이 추가로 필요.
-
-## 현재 실제 Agent 도구
-
-- LangGraph: Guardrail, 자료 수신, 벡터 저장, RAG, KIPRIS, LLM, 자기검토, 체크리스트, 출력 노드 실행
-- Guardrail: 허위정보, 범위초과 요청 차단
-- File parser: PDF/DOCX/TXT/이미지 OCR 후보 처리
-- Session memory: 한 세션 안에서 대화와 자료 누적
-- Embedding: OpenAIEmbeddings로 청크를 벡터화
-- Vector DB: PostgreSQL 17 + pgVector 저장/검색
-- RAG: 세션 자료와 공용 참고자료 검색
-- KIPRISPlus: 국내 특허·실용 공개·등록공보 후보 검색
-- LLM structured output: OpenAI 모델로 명세서 섹션, 질문, 검토 항목 구조화
-- Self-review: LLM 결과를 원문/RAG/KIPRIS 근거와 대조해 의심 항목을 검토로 분리
-- Human-in-the-loop checklist: 부족/검토 필요 항목을 사람에게 되묻기
-- Exporter: Markdown/Word 산출물 생성
+SPEC Agent는 출원명세서 초안 작성을 보조하는 도구입니다. 최종 특허성 판단, 신규성·진보성 판단, 청구범위 확정, 실제 출원 여부 결정은 전문가 검토가 필요합니다.
