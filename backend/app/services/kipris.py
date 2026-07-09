@@ -14,10 +14,39 @@ from app.models.schemas import PriorArtCandidate, ReferenceItem
 # 특허·실용 공개·등록공보 REST API의 항목별 전체검색 오퍼레이션임.
 ADVANCED_SEARCH_OPERATION = "getAdvancedSearch"
 WORD_SEARCH_OPERATION = "getWordSearch"
+MIN_SIMILARITY_SCORE = 40
 
 # 검색 제외어 #
 # 너무 일반적인 단어는 유사도 계산에서 제외함.
 STOPWORDS = {
+    "아이디어",
+    "기반",
+    "기반해서",
+    "바탕",
+    "상담",
+    "상담을",
+    "받았어",
+    "받았다",
+    "이거",
+    "이거야",
+    "이거거든",
+    "결국",
+    "단점",
+    "많이",
+    "발생",
+    "발생하게",
+    "만들자",
+    "만들어",
+    "하자",
+    "되는",
+    "된다",
+    "되며",
+    "기계",
+    "기계에",
+    "들어가는",
+    "들어간",
+    "원가",
+    "절감",
     "특허",
     "발명",
     "고안",
@@ -37,7 +66,55 @@ STOPWORDS = {
     "또는",
     "있는",
     "하는",
+    "높은",
+    "낮은",
 }
+
+TECHNICAL_PRIORITY_TERMS = {
+    "볼트",
+    "나사",
+    "체결",
+    "체결구",
+    "선단",
+    "선단부",
+    "끝부분",
+    "삼각",
+    "삼각형",
+    "단면",
+    "회전",
+    "마찰",
+    "마찰열",
+    "고열",
+    "내열",
+    "내열성",
+    "재질",
+    "합금",
+    "용융",
+    "나사부",
+    "체결부",
+}
+
+TECHNICAL_PRIORITY_ORDER = [
+    "볼트",
+    "나사",
+    "체결구",
+    "체결",
+    "삼각형",
+    "삼각",
+    "선단부",
+    "선단",
+    "끝부분",
+    "단면",
+    "내열",
+    "내열성",
+    "재질",
+    "합금",
+    "고열",
+    "마찰열",
+    "용융",
+    "회전",
+]
+TECHNICAL_PRIORITY_INDEX = {term: index for index, term in enumerate(TECHNICAL_PRIORITY_ORDER)}
 
 
 # KIPRIS 사용 가능 여부 #
@@ -67,14 +144,50 @@ def search_kipris(settings: Settings, query: str, limit: int | None = None) -> l
 
     count = max(1, min(limit or settings.kipris_result_count, 10))
     candidates: list[PriorArtCandidate] = []
-    for operation in [WORD_SEARCH_OPERATION, ADVANCED_SEARCH_OPERATION]:
-        candidates.extend(_search_operation(settings, query, count, operation))
-        if len(candidates) >= count:
+    for query_variant in _query_variants(query):
+        for operation in [WORD_SEARCH_OPERATION, ADVANCED_SEARCH_OPERATION]:
+            candidates.extend(_search_operation(settings, query_variant, count, operation))
+        if len(_dedupe_candidates(candidates)) >= count * 2:
             break
 
-    deduped = [candidate for candidate in _dedupe_candidates(candidates) if candidate.similarity_score > 0]
+    for candidate in candidates:
+        _score_candidate(candidate, query)
+    deduped = [
+        candidate
+        for candidate in _dedupe_candidates(candidates)
+        if candidate.similarity_score >= MIN_SIMILARITY_SCORE
+    ]
+    if not deduped:
+        return []
     deduped.sort(key=lambda item: item.similarity_score, reverse=True)
     return deduped[:count]
+
+
+# 검색어 변형 #
+# 긴 문장형 검색어가 0건일 때를 대비해 핵심어 조합을 자동으로 넓혀 검색함.
+def _query_variants(query: str) -> list[str]:
+    terms = _extract_terms(query)
+    variants = []
+    primary = " ".join(terms[:8]).strip() or query.strip()
+    if primary:
+        variants.append(primary)
+    anchors = [term for term in terms if term in {"볼트", "나사", "체결구", "체결"}]
+    if not anchors and terms:
+        anchors = terms[:1]
+    modifiers = [term for term in terms if term not in anchors]
+    for anchor in anchors[:2]:
+        for modifier in modifiers[:8]:
+            variants.append(f"{anchor} {modifier}")
+    for index in range(min(len(terms) - 1, 5)):
+        variants.append(f"{terms[index]} {terms[index + 1]}")
+    deduped = []
+    seen = set()
+    for variant in variants:
+        cleaned = " ".join(variant.split())
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            deduped.append(cleaned)
+    return deduped[:10]
 
 
 # KIPRISPlus 단일 오퍼레이션 호출 #
@@ -276,6 +389,7 @@ def _pick(data: dict[str, str], *names: str) -> str:
 # 질의 핵심어가 제목/초록/IPC에 얼마나 겹치는지 기반의 단순 점수임.
 def _score_candidate(candidate: PriorArtCandidate, query: str) -> None:
     query_terms = _extract_terms(query)
+    title = (candidate.title or "").lower()
     haystack = " ".join([candidate.title, candidate.abstract, candidate.ipc]).lower()
     matched = [term for term in query_terms if term.lower() in haystack]
     unmatched = [term for term in query_terms if term not in matched]
@@ -283,8 +397,13 @@ def _score_candidate(candidate: PriorArtCandidate, query: str) -> None:
         score = round((len(matched) / len(query_terms)) * 100)
     else:
         score = 0
-    if candidate.title and any(term.lower() in candidate.title.lower() for term in query_terms):
+    if candidate.title and any(term.lower() in title for term in query_terms):
         score = min(100, score + 12)
+    if "볼트" in query_terms and "삼각" in " ".join(query_terms):
+        if "볼트" in title and "삼각" in title:
+            score = min(100, score + 25)
+        if any(noise in title for noise in ["전압", "킬로 볼트", "킬로볼트", "변압기", "전력"]):
+            score = max(0, score - 35)
     candidate.similarity_score = max(0, min(score, 100))
     candidate.matched_terms = matched[:8]
     if candidate.similarity_score >= 65:
@@ -307,12 +426,99 @@ def _extract_terms(text: str) -> list[str]:
     raw_terms = re.findall(r"[가-힣A-Za-z0-9]{2,}", text or "")
     terms = []
     seen = set()
-    for term in raw_terms:
-        normalized = term.lower()
+    for term in _expanded_terms(text) + raw_terms:
+        normalized = _normalize_term(term)
+        if len(normalized) < 2:
+            continue
         if normalized in STOPWORDS or term in STOPWORDS:
             continue
         if normalized in seen:
             continue
         seen.add(normalized)
-        terms.append(term)
+        terms.append(normalized)
+    terms.sort(key=_term_priority)
     return terms
+
+
+# 검색어 확장 #
+# 대화식 표현에서 특허 검색에 더 가까운 기술어 후보를 보강함.
+def _expanded_terms(text: str) -> list[str]:
+    normalized = re.sub(r"\s+", "", text or "").lower()
+    expanded = []
+    if "볼트" in normalized or "나사" in normalized:
+        expanded.extend(["볼트", "체결구", "나사"])
+    if "끝부분" in normalized or "끝" in normalized or "선단" in normalized:
+        expanded.extend(["선단부", "선단"])
+    if "삼각" in normalized:
+        expanded.extend(["삼각형", "삼각", "단면"])
+    if any(term in normalized for term in ["열", "발화점", "녹", "녹게", "고열"]):
+        expanded.extend(["내열", "고열", "마찰열", "용융"])
+    if "재질" in normalized or "제질" in normalized or "소재" in normalized:
+        expanded.extend(["재질", "내열성", "합금"])
+    if "회전" in normalized or "돌아" in normalized:
+        expanded.append("회전")
+    return expanded
+
+
+# 검색어 정규화 #
+# 조사/어미가 붙은 대화식 단어를 검색용 핵심어로 줄임.
+def _normalize_term(term: str) -> str:
+    normalized = (term or "").strip().lower()
+    normalized = normalized.replace("제질", "재질")
+    suffixes = [
+        "입니다",
+        "합니다",
+        "했어",
+        "았어",
+        "었어",
+        "인데요",
+        "인데",
+        "으로는",
+        "으로",
+        "로는",
+        "에는",
+        "에서",
+        "에게",
+        "까지",
+        "부터",
+        "라고",
+        "이나",
+        "거나",
+        "이며",
+        "되며",
+        "하게",
+        "한다",
+        "되는",
+        "된다",
+        "되고",
+        "하고",
+        "하면",
+        "은",
+        "는",
+        "이",
+        "가",
+        "을",
+        "를",
+        "에",
+        "로",
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for suffix in suffixes:
+            if normalized.endswith(suffix) and len(normalized) > len(suffix) + 1:
+                normalized = normalized[: -len(suffix)]
+                changed = True
+                break
+    return normalized
+
+
+# 기술어 우선순위 #
+# 대화어보다 구성/형상/재질/작동 관련 단어를 앞에 둠.
+def _term_priority(term: str) -> tuple[int, int, str]:
+    normalized = _normalize_term(term)
+    if normalized in TECHNICAL_PRIORITY_INDEX:
+        return (0, TECHNICAL_PRIORITY_INDEX[normalized], normalized)
+    if normalized in TECHNICAL_PRIORITY_TERMS:
+        return (0, 999, normalized)
+    return (1, -len(normalized), normalized)
